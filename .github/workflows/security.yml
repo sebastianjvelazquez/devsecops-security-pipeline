@@ -4,12 +4,15 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   bandit_scan:
-    name: Run Bandit (Python SAST)
+    name: Bandit (Python SAST)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -20,12 +23,20 @@ jobs:
       - name: Install Bandit
         run: pip install --upgrade pip bandit
 
+      # -lll => fail on HIGH severity; also produce JSON report
       - name: Run Bandit Scan (fail on HIGH)
         run: |
           bandit -r . -f json -o bandit_report.json -lll
 
-  trivy_scan:
-    name: Run Trivy (Filesystem & Container Scan)
+      - name: Upload Bandit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit_report.json
+          if-no-files-found: error
+
+  trivy_fs_scan:
+    name: Trivy (Filesystem / Dependencies)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,22 +50,118 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y trivy
 
-      - name: Run Trivy Filesystem Scan (fail on HIGH/CRITICAL)
+      # Fail build on HIGH/CRITICAL and save JSON report
+      - name: Trivy Filesystem Scan (fail on HIGH/CRITICAL)
         run: trivy fs --severity HIGH,CRITICAL --exit-code 1 --format json --output trivy_fs.json .
 
-  upload_reports:
-    name: Upload Security Reports
-    needs: [bandit_scan, trivy_scan]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Upload Reports as Artifacts
+      - name: Upload Trivy FS report
         uses: actions/upload-artifact@v4
         with:
-          name: security-reports
-          path: |
-            bandit_report.json
-            trivy_fs.json
+          name: trivy-fs-report
+          path: trivy_fs.json
+          if-no-files-found: error
+
+  trivy_container_scan:
+    name: Trivy (Container Image) - optional if Dockerfile exists
+    runs-on: ubuntu-latest
+    if: ${{ hashFiles('Dockerfile') != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Docker & Trivy
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y docker.io wget apt-transport-https gnupg lsb-release
+          sudo usermod -aG docker $USER
+          sudo systemctl start docker
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+      - name: Build image
+        run: |
+          docker build -t devsecops-demo:latest .
+
+      - name: Trivy Image Scan (fail on HIGH/CRITICAL)
+        run: trivy image --severity HIGH,CRITICAL --exit-code 1 --format json --output trivy_image.json devsecops-demo:latest
+
+      - name: Upload Trivy Image report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-report
+          path: trivy_image.json
+          if-no-files-found: error
+
+  gitleaks_scan:
+    name: Gitleaks (Secret Scanning)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          args: detect --source . --no-banner --report-format json --report-path gitleaks_report.json
+
+      - name: Upload Gitleaks report
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: gitleaks_report.json
+          if-no-files-found: error
+
+  checkov_scan:
+    name: Checkov (Terraform / IaC)
+    runs-on: ubuntu-latest
+    if: ${{ hashFiles('**/*.tf') != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform
+          output_format: json
+          output_file_path: .
+          quiet: true
+
+      - name: Upload Checkov report
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkov-report
+          path: results_json.json
+          if-no-files-found: warn
+
+  zap_baseline:
+    name: OWASP ZAP Baseline (DAST on local app)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start minimal Flask app (localhost:5000)
+        run: |
+          pip install flask
+          nohup python - <<'PY' &
+from flask import Flask
+app=Flask(__name__)
+@app.get("/")
+def home(): return "Hello, secure world!"
+app.run(host="0.0.0.0", port=5000)
+PY
+          sleep 3
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: 'http://localhost:5000'
+          cmd_options: '-a -m 5'
+        continue-on-error: true
+
+      - name: Upload ZAP report (HTML)
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: report_html.html
           if-no-files-found: warn
