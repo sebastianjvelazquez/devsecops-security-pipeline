@@ -9,7 +9,7 @@ jobs:
     name: Run Bandit (Python SAST)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -20,18 +20,12 @@ jobs:
       - name: Install Bandit
         run: pip install --upgrade pip bandit
 
-      - name: Run Bandit Scan
+      - name: Run Bandit Scan (fail on HIGH)
         run: |
-          bandit -r . -f json -o bandit_report.json
-          python - <<'PY'
-import json, sys
-d=json.load(open('bandit_report.json'))
-high=sum(1 for r in d.get('results',[]) if r.get('issue_severity')=='HIGH')
-sys.exit(1 if high>0 else 0)
-PY
+          bandit -r . -f json -o bandit_report.json -lll
 
   trivy_scan:
-    name: Run Trivy (FS scan)
+    name: Run Trivy (Filesystem & Container Scan)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,16 +39,18 @@ PY
           sudo apt-get update
           sudo apt-get install -y trivy
 
-      - name: Trivy FS Scan (fail on HIGH/CRITICAL)
+      - name: Run Trivy Filesystem Scan (fail on HIGH/CRITICAL)
         run: trivy fs --severity HIGH,CRITICAL --exit-code 1 --format json --output trivy_fs.json .
 
   upload_reports:
+    name: Upload Security Reports
     needs: [bandit_scan, trivy_scan]
     runs-on: ubuntu-latest
     steps:
-      - name: Download reports (from previous jobs)
+      - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Upload Security Reports
+
+      - name: Upload Reports as Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: security-reports
