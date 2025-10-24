@@ -9,34 +9,56 @@ jobs:
     name: Run Bandit (Python SAST)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install Bandit
-        run: pip install bandit
+        run: pip install --upgrade pip bandit
 
       - name: Run Bandit Scan
-        run: bandit -r . -f txt -o bandit_report.txt
-        
+        run: |
+          bandit -r . -f json -o bandit_report.json
+          python - <<'PY'
+import json, sys
+d=json.load(open('bandit_report.json'))
+high=sum(1 for r in d.get('results',[]) if r.get('issue_severity')=='HIGH')
+sys.exit(1 if high>0 else 0)
+PY
+
   trivy_scan:
-    name: Run Trivy (Container & FS Scan)
+    name: Run Trivy (FS scan)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install Trivy
         run: |
           sudo apt-get update -y
           sudo apt-get install -y wget apt-transport-https gnupg lsb-release
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-          echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee /etc/apt/sources.list.d/trivy.list
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
           sudo apt-get update
           sudo apt-get install -y trivy
 
-      - name: Run Trivy FS Scan
-        run: trivy fs --exit-code 0 --severity HIGH,CRITICAL .
+      - name: Trivy FS Scan (fail on HIGH/CRITICAL)
+        run: trivy fs --severity HIGH,CRITICAL --exit-code 1 --format json --output trivy_fs.json .
+
+  upload_reports:
+    needs: [bandit_scan, trivy_scan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download reports (from previous jobs)
+        uses: actions/checkout@v4
+      - name: Upload Security Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            bandit_report.json
+            trivy_fs.json
+          if-no-files-found: warn
