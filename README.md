@@ -4,7 +4,7 @@
 
 ## 🧭 Overview
 The **Cloud Security Automation Pipeline** is a CI/CD workflow built with **GitHub Actions** to automate vulnerability scanning and strengthen application security.  
-It continuously analyzes Python source code and container images using open-source tools to detect risks early in the development lifecycle — aligning with DevSecOps and Cloud Security best practices.
+It continuously analyzes Python source code and container images using open-source tools to detect risks early in the development lifecycle — aligning with DevSecOps and Cloud Security best practice[...]
 
 ---
 
@@ -25,13 +25,12 @@ It continuously analyzes Python source code and container images using open-sour
 
 ## 📂 Repository Structure
 .
-├── app.py # Example Python app to test Bandit scanning
-├── Dockerfile # Optional Docker image for Trivy scanning
-├── .github/
-│ └── workflows/
-│ └── security.yml # Main CI/CD security workflow
+├── app.py                 # Example Python app to test Bandit scanning
+├── Dockerfile             # Optional Docker image for Trivy scanning
+├── .github
+│   └── workflows
+│       └── security.yml   # Main CI/CD security workflow
 └── README.md
-
 
 ---
 
@@ -59,7 +58,7 @@ You can download these reports from the **Actions → Artifacts** tab in your Gi
 Cybersecurity Engineering & Architecture Intern  
 🎓 Florida State University  
 💡 Focus Areas: Cloud Security, IAM, and DevSecOps Automation  
-🔗 [LinkedIn](https://www.linkedin.com/in/sebastian-velazquez)
+🔗 [LinkedIn](https://www.linkedin.com/in/sebastianjvelazquez)
 
 ---
 
