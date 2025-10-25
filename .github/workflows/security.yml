@@ -50,7 +50,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y trivy
 
-      # Fail build on HIGH/CRITICAL and save JSON report
       - name: Trivy Filesystem Scan (fail on HIGH/CRITICAL)
         run: trivy fs --severity HIGH,CRITICAL --exit-code 1 --format json --output trivy_fs.json .
 
@@ -91,11 +90,11 @@ jobs:
         if: env.HAS_DOCKERFILE == 'true'
         run: docker build -t devsecops-demo:latest .
 
-      # Trivy returns 100 when findings meet threshold; warn but continue and upload report
+      # Do not fail the step when findings exist; still produce & upload report
       - name: Trivy Image Scan (warn on HIGH/CRITICAL)
         if: env.HAS_DOCKERFILE == 'true'
         continue-on-error: true
-        run: trivy image --severity HIGH,CRITICAL --exit-code 100 --format json --output trivy_image.json devsecops-demo:latest
+        run: trivy image --severity HIGH,CRITICAL --exit-code 0 --format json --output trivy_image.json devsecops-demo:latest
 
       - name: Upload Trivy Image report
         if: env.HAS_DOCKERFILE == 'true'
@@ -111,14 +110,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Install and run gitleaks directly (action inputs vary across versions)
-      - name: Install Gitleaks
+      # Install Go, then install Gitleaks via go install to a known path
+      - name: Install Go
         run: |
-          curl -sSL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh | sudo bash
+          sudo apt-get update -y
+          sudo apt-get install -y golang
+
+      - name: Install Gitleaks (via Go)
+        run: |
+          export GOPATH="$HOME/go"
+          export GOBIN="$GOPATH/bin"
+          mkdir -p "$GOBIN"
+          /usr/bin/go install github.com/gitleaks/gitleaks/v8@latest
+          echo "$GOBIN" >> $GITHUB_PATH
 
       - name: Run Gitleaks (continue on findings)
         run: |
-          gitleaks detect --source . --no-banner --report-format json --report-path gitleaks_report.json || true
+          "$HOME/go/bin/gitleaks" version || true
+          "$HOME/go/bin/gitleaks" detect --source . --no-banner --report-format json --report-path gitleaks_report.json || true
 
       - name: Upload Gitleaks report
         uses: actions/upload-artifact@v4
@@ -186,13 +195,14 @@ jobs:
           PY
           sleep 3
 
-      # Disable issue writing to avoid permission errors
+      # Explicitly set artifact name to avoid default 'zap_scan'
       - name: ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.12.0
         with:
           target: 'http://localhost:5000'
           cmd_options: '-a -m 5'
           allow_issue_writing: false
+          artifact_name: zap-report
         continue-on-error: true
 
       - name: Upload ZAP report (HTML)
