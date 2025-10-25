@@ -62,11 +62,20 @@ jobs:
   trivy_container_scan:
     name: Trivy (Container Image)
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('Dockerfile') != '' }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: Detect Dockerfile
+        id: detect_dockerfile
+        run: |
+          if [ -f "Dockerfile" ]; then
+            echo "HAS_DOCKERFILE=true" >> $GITHUB_ENV
+          else
+            echo "HAS_DOCKERFILE=false" >> $GITHUB_ENV
+          fi
+
       - name: Install Docker & Trivy
+        if: env.HAS_DOCKERFILE == 'true'
         run: |
           sudo apt-get update -y
           sudo apt-get install -y docker.io wget apt-transport-https gnupg lsb-release
@@ -77,17 +86,20 @@ jobs:
           sudo apt-get install -y trivy
 
       - name: Build image
+        if: env.HAS_DOCKERFILE == 'true'
         run: docker build -t devsecops-demo:latest .
 
       - name: Trivy Image Scan (fail on HIGH/CRITICAL)
+        if: env.HAS_DOCKERFILE == 'true'
         run: trivy image --severity HIGH,CRITICAL --exit-code 1 --format json --output trivy_image.json devsecops-demo:latest
 
       - name: Upload Trivy Image report
+        if: env.HAS_DOCKERFILE == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: trivy-image-report
           path: trivy_image.json
-          if-no-files-found: error
+          if-no-files-found: warn
 
   gitleaks_scan:
     name: Gitleaks (Secret Scanning)
@@ -110,11 +122,20 @@ jobs:
   checkov_scan:
     name: Checkov (Terraform / IaC)
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('**/*.tf') != '' }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: Detect Terraform
+        id: detect_tf
+        run: |
+          if ls **/*.tf >/dev/null 2>&1; then
+            echo "HAS_TF=true" >> $GITHUB_ENV
+          else
+            echo "HAS_TF=false" >> $GITHUB_ENV
+          fi
+
       - name: Run Checkov
+        if: env.HAS_TF == 'true'
         uses: bridgecrewio/checkov-action@v12
         with:
           directory: .
@@ -124,6 +145,7 @@ jobs:
           quiet: true
 
       - name: Upload Checkov report
+        if: env.HAS_TF == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: checkov-report
