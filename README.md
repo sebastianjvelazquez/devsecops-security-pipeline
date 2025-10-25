@@ -3,8 +3,7 @@
 ![Security Pipeline](https://github.com/sebastianjvelazquez/devsecops-security-pipeline/actions/workflows/security.yml/badge.svg)
 
 ## 🧭 Overview
-The **Cloud Security Automation Pipeline** is a CI/CD workflow built with **GitHub Actions** to automate vulnerability scanning and strengthen application security.  
-It continuously analyzes Python source code and container images using open-source tools to detect risks early in the development lifecycle — aligning with DevSecOps and Cloud Security best practice[...]
+The **Cloud Security Automation Pipeline** is a CI/CD workflow built with **GitHub Actions** to automate vulnerability scanning and strengthen application security. It continuously analyzes Python source code and container images using open-source tools to detect risks early in the development lifecycle — aligning with DevSecOps and Cloud Security best practices.
 
 ---
 
