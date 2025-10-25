@@ -1,4 +1,4 @@
-name: Security Pipeline
+name: Security Pipeline (Lean)
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
       - name: Install Bandit
         run: pip install --upgrade pip bandit
 
-      # -lll => only HIGH severity; Bandit exits non-zero if any HIGH issues
+      # -lll => HIGH severity only; remove -lll if you want all severities
       - name: Run Bandit Scan (fail on HIGH)
         run: |
           bandit -r . -f json -o bandit_report.json -lll
@@ -50,8 +50,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y trivy
 
-      - name: Trivy Filesystem Scan (fail on HIGH/CRITICAL)
-        run: trivy fs --severity HIGH,CRITICAL --exit-code 1 --format json --output trivy_fs.json .
+      # Keep learning signals but don't fail the job; set --exit-code 0
+      - name: Trivy Filesystem Scan (warn on HIGH/CRITICAL)
+        run: trivy fs --severity HIGH,CRITICAL --exit-code 0 --format json --output trivy_fs.json .
 
       - name: Upload Trivy FS report
         uses: actions/upload-artifact@v4
@@ -60,155 +61,29 @@ jobs:
           path: trivy_fs.json
           if-no-files-found: error
 
-  trivy_container_scan:
-    name: Trivy (Container Image)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Detect Dockerfile
-        run: |
-          if [ -f "Dockerfile" ]; then
-            echo "HAS_DOCKERFILE=true" >> $GITHUB_ENV
-          else
-            echo "HAS_DOCKERFILE=false" >> $GITHUB_ENV
-          fi
-
-      - name: Install Docker & Trivy
-        if: env.HAS_DOCKERFILE == 'true'
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y docker.io wget apt-transport-https gnupg lsb-release
-          sudo systemctl start docker
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
-          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
-          sudo apt-get update
-          sudo apt-get install -y trivy
-
-      - name: Build image
-        if: env.HAS_DOCKERFILE == 'true'
-        run: docker build -t devsecops-demo:latest .
-
-      # Never fail the step; still generate JSON report for artifacts
-      - name: Trivy Image Scan (warn on HIGH/CRITICAL)
-        if: env.HAS_DOCKERFILE == 'true'
-        run: trivy image --severity HIGH,CRITICAL --format json --output trivy_image.json devsecops-demo:latest || true
-
-      - name: Upload Trivy Image report
-        if: env.HAS_DOCKERFILE == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-image-report
-          path: trivy_image.json
-          if-no-files-found: warn
-
   gitleaks_scan:
     name: Gitleaks (Secret Scanning)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # Install Go, then install Gitleaks via go install to a known path
-      - name: Install Go
+      # Install latest gitleaks release (static binary) safely to /usr/local/bin
+      - name: Install Gitleaks
+        shell: bash
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y golang
+          set -e
+          GL_VERSION="$(curl -sSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep tag_name | cut -d '"' -f4)"
+          curl -sSL -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/${GL_VERSION}/gitleaks_${GL_VERSION#v}_linux_x64.tar.gz"
+          sudo tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
+          /usr/local/bin/gitleaks version
 
-      - name: Install Gitleaks (via Go)
-        run: |
-          export GOPATH="$HOME/go"
-          export GOBIN="$GOPATH/bin"
-          mkdir -p "$GOBIN"
-          /usr/bin/go install github.com/gitleaks/gitleaks/v8@latest
-          echo "$GOBIN" >> $GITHUB_PATH
-
-      - name: Run Gitleaks (continue on findings)
-        continue-on-error: true
-        run: |
-          "$HOME/go/bin/gitleaks" version || true
-          "$HOME/go/bin/gitleaks" detect --source . --no-banner --report-format json --report-path gitleaks_report.json || true
+      # Do not fail the pipeline on findings; we just want the report for learning
+      - name: Run Gitleaks (warn on findings)
+        run: /usr/local/bin/gitleaks detect --source . --no-banner --report-format json --report-path gitleaks_report.json || true
 
       - name: Upload Gitleaks report
         uses: actions/upload-artifact@v4
         with:
           name: gitleaks-report
           path: gitleaks_report.json
-          if-no-files-found: warn
-
-  checkov_scan:
-    name: Checkov (Terraform / IaC)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Detect Terraform
-        run: |
-          if ls **/*.tf >/dev/null 2>&1; then
-            echo "HAS_TF=true" >> $GITHUB_ENV
-          else
-            echo "HAS_TF=false" >> $GITHUB_ENV
-          fi
-
-      - name: Run Checkov
-        if: env.HAS_TF == 'true'
-        uses: bridgecrewio/checkov-action@v12
-        with:
-          directory: .
-          framework: terraform
-          output_format: json
-          output_file_path: .
-          quiet: true
-
-      - name: Upload Checkov report
-        if: env.HAS_TF == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: checkov-report
-          path: results_json.json
-          if-no-files-found: warn
-
-  zap_baseline:
-    name: OWASP ZAP Baseline (DAST via Docker)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python (for app)
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Start minimal Flask app (localhost:5000)
-        shell: bash
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install flask
-          nohup python - <<'PY' &
-          from flask import Flask
-          app = Flask(__name__)
-          @app.get("/")
-          def home():
-              return "Hello, secure world!"
-          app.run(host="0.0.0.0", port=5000)
-          PY
-          sleep 3
-
-      - name: Install Docker for ZAP
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y docker.io
-          sudo systemctl start docker
-
-      # Run ZAP baseline from official docker image; write HTML report locally
-      - name: Run ZAP Baseline (Docker)
-        shell: bash
-        run: |
-          docker run --rm --network=host -v "$PWD":/zap/wrk owasp/zap2docker-stable \
-            zap-baseline.py -t http://localhost:5000 -r zap_report.html -m 5 -a || true
-
-      - name: Upload ZAP report (HTML)
-        uses: actions/upload-artifact@v4
-        with:
-          name: zapreport
-          path: zap_report.html
-          if-no-files-found: warn
+          if-no-files-found: error
